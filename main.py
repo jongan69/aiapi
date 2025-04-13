@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 import asyncio
 from g4f.client import Client
+import os
+import uvicorn
 
 app = FastAPI()
 client = Client()
@@ -55,3 +57,7 @@ async def chat(ai_request: AIRequest):
     # Otherwise just one-pass response
     final_response = await call_model(messages, model)
     return {"response": final_response}
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))  # Default to 8000 if PORT is not set
+    uvicorn.run(app, host="0.0.0.0", port=port)

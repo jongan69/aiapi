@@ -7,9 +7,11 @@ attrs==25.3.0
 Brotli==1.1.0
 certifi==2025.1.31
 charset-normalizer==3.4.1
+click==8.1.8
 fastapi==0.115.12
 frozenlist==1.5.0
 g4f==0.5.0.4
+h11==0.14.0
 idna==3.10
 multidict==6.4.3
 nest-asyncio==1.6.0
@@ -23,4 +25,5 @@ starlette==0.46.2
 typing-inspection==0.4.0
 typing_extensions==4.13.2
 urllib3==2.4.0
+uvicorn==0.34.1
 yarl==1.19.0
