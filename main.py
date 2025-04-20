@@ -5,6 +5,7 @@ import asyncio
 from g4f.client import Client
 import os
 import uvicorn
+import json
 
 app = FastAPI(
     title="AI API",
@@ -118,61 +119,19 @@ IMAGE_MODELS = [
 ]
 
 class AIRequest(BaseModel):
-    messages: List[Dict[str, str]] = Field(
-        description="List of messages like [{'role': 'system', 'content': '...'}]"
-    )
-    model: str = Field(
-        default="gpt-4o-mini",
-        description="The AI model to use for generating responses",
-        examples=AVAILABLE_MODELS[:5]  # Show first 5 models as examples
-    )
-    chunk_size: Optional[int] = Field(
-        default=1500,
-        description="Size of text chunks when wrap_input is True"
-    )
-    wrap_input: Optional[bool] = Field(
+    messages: List[Dict[str, str]]
+    model: str = Field(default="gpt-4o-mini")
+    chunk_size: Optional[int] = Field(default=1500)
+    wrap_input: Optional[bool] = Field(default=False)
+    json_mode: Optional[bool] = Field(
         default=False,
-        description="Whether to split long user messages into chunks"
+        description="Force model to respond strictly in JSON format."
     )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "messages": [
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": "Hello, how are you?"}
-                ],
-                "model": "gpt-4o-mini",
-                "chunk_size": 1500,
-                "wrap_input": False
-            }
-        }
-    }
 
 class ImageRequest(BaseModel):
-    prompt: str = Field(
-        description="Text description of the image to generate"
-    )
-    model: str = Field(
-        default="flux",
-        description="The image generation model to use",
-        examples=IMAGE_MODELS[:3]  # Show first 3 image models as examples
-    )
-    response_format: str = Field(
-        default="url",
-        description="Format of the response (url or b64_json)",
-        examples=["url", "b64_json"]
-    )
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "prompt": "a white siamese cat",
-                "model": "flux",
-                "response_format": "url"
-            }
-        }
-    }
+    prompt: str
+    model: str = Field(default="flux")
+    response_format: str = Field(default="url")
 
 def chunk_text(text: str, chunk_size: int = 1500) -> List[str]:
     from textwrap import wrap
@@ -181,82 +140,87 @@ def chunk_text(text: str, chunk_size: int = 1500) -> List[str]:
         return chunk_text(text, chunk_size * 2)
     return chunks
 
-async def call_model(messages: List[Dict[str, str]], model: str) -> str:
-    response = await asyncio.to_thread(
-        client.chat.completions.create,
-        model=model,
-        messages=messages,
-        web_search=False
-    )
-    return response.choices[0].message.content
+async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool = False, max_retries: int = 3) -> Any:
+    if json_mode:
+        messages = [{"role": "system", "content": "Respond only with valid minified JSON. No extra text or explanations."}] + messages
 
-@app.post("/chat/", 
-    summary="Chat with an AI model",
-    description="Send messages to an AI model and get a response. Supports various models including GPT, Claude, Gemini, and many others."
-)
+    for attempt in range(max_retries):
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model=model,
+            messages=messages,
+            web_search=False
+        )
+
+        content = response.choices[0].message.content
+
+        if json_mode:
+            try:
+                return json.loads(content)
+            except json.JSONDecodeError:
+                if attempt < max_retries - 1:
+                    continue  # Retry
+                else:
+                    return {
+                        "error": f"Model did not return valid JSON after {max_retries} attempts.",
+                        "raw_response": content
+                    }
+        else:
+            return content  # If no json_mode, just return plain response
+
+
+@app.post("/chat/")
 async def chat(ai_request: AIRequest):
     messages = ai_request.messages
     model = ai_request.model
+    json_mode = ai_request.json_mode
 
     if ai_request.wrap_input:
-        # If user provides a long 'user' message, we split it and process in chunks
         user_msgs = [msg["content"] for msg in messages if msg["role"] == "user"]
         base_messages = [msg for msg in messages if msg["role"] != "user"]
-        
+
         all_chunks = []
         for user_msg in user_msgs:
             chunks = chunk_text(user_msg, ai_request.chunk_size)
             summaries = await asyncio.gather(*[
-                call_model(base_messages + [{"role": "user", "content": chunk}], model)
+                call_model(base_messages + [{"role": "user", "content": chunk}], model, json_mode)
                 for chunk in chunks
             ])
-            combined = "\n\n".join(summaries)
-            final_response = await call_model(base_messages + [{"role": "user", "content": combined}], model)
+            combined = "\n\n".join([summary if isinstance(summary, str) else json.dumps(summary) for summary in summaries])
+            final_response = await call_model(base_messages + [{"role": "user", "content": combined}], model, json_mode)
             all_chunks.append(final_response)
-        
-        return {"response": "\n\n".join(all_chunks)}
-    
-    # Otherwise just one-pass response
-    final_response = await call_model(messages, model)
+
+        return {"response": all_chunks}
+
+    final_response = await call_model(messages, model, json_mode)
     return {"response": final_response}
 
-@app.post("/images/generate/",
-    summary="Generate an image from a text prompt",
-    description="Generate an image based on a text description using various AI image generation models."
-)
+@app.post("/images/generate/")
 async def generate_image(image_request: ImageRequest):
     prompt = image_request.prompt
     model = image_request.model
     response_format = image_request.response_format
-    
-    # Call the image generation API
+
     response = await asyncio.to_thread(
         client.images.generate,
         model=model,
         prompt=prompt,
         response_format=response_format
     )
-    
-    # Return the image URL or base64 data
+
     if response_format == "url":
         return {"url": response.data[0].url}
     else:
         return {"b64_json": response.data[0].b64_json}
 
-@app.get("/models/", 
-    summary="List all available models",
-    description="Returns a list of all available AI models that can be used with the chat endpoint"
-)
+@app.get("/models/")
 async def list_models():
     return {"models": AVAILABLE_MODELS}
 
-@app.get("/models/image/", 
-    summary="List all available image models",
-    description="Returns a list of all available AI image generation models"
-)
+@app.get("/models/image/")
 async def list_image_models():
     return {"models": IMAGE_MODELS}
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))  # Default to 8000 if PORT is not set
+    port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
