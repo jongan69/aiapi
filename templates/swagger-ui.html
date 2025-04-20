@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI API Documentation</title>
+    <!-- Swagger UI CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui.css">
+    <!-- Our custom CSS -->
+    <link rel="stylesheet" href="/static/custom-swagger.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AI API Documentation</h1>
+            <button id="toggle-ui" class="toggle-button">Switch to Chat UI</button>
+        </div>
+
+        <div id="swagger-ui" class="swagger-container"></div>
+
+        <div id="chat-ui" class="chat-container" style="display: none;">
+            <div class="chat-header">
+                <h2>Chat Interface</h2>
+                <div class="chat-controls">
+                    <div class="model-selector">
+                        <label for="model-select">Model:</label>
+                        <select id="model-select" class="model-select">
+                            <option value="">Loading models...</option>
+                        </select>
+                    </div>
+                    <div class="json-mode-toggle">
+                        <label class="toggle-label" for="json-mode-toggle">JSON Mode</label>
+                        <label class="switch">
+                            <input type="checkbox" id="json-mode-toggle">
+                            <span class="slider round"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="chat-messages" id="chat-messages">
+                <div class="welcome-message">
+                    <h3>Welcome to AI Chat</h3>
+                    <p>Select a model and start chatting!</p>
+                </div>
+            </div>
+
+            <div class="chat-input-container">
+                <div class="typing-indicator" style="display: none;">
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                    <div class="dot"></div>
+                </div>
+                <textarea 
+                    id="user-input" 
+                    placeholder="Type your message..." 
+                    rows="3"
+                    class="chat-textarea"
+                ></textarea>
+                <button id="send-button" class="send-button">
+                    <span class="button-text">Send</span>
+                    <span class="button-icon">→</span>
+                </button>
+            </div>
+
+            <div class="image-section">
+                <h3>Image Generation</h3>
+                <div class="image-input-container">
+                    <input type="text" id="image-prompt" class="image-prompt-input" placeholder="Enter image prompt...">
+                    <select id="image-model" class="model-select">
+                        <option value="">Loading image models...</option>
+                    </select>
+                    <button class="generate-button">
+                        <span class="button-text">Generate</span>
+                        <span class="button-icon">✨</span>
+                    </button>
+                </div>
+                <div class="generated-image"></div>
+            </div>
+
+            <div class="image-section">
+                <h3>Image Variations</h3>
+                <button class="variation-button">Create Variations</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Image Variation Modal -->
+    <div id="variation-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2>Create Image Variations</h2>
+            <div class="image-upload-container">
+                <label for="image-upload" class="image-upload-label">
+                    Choose an image
+                    <input type="file" id="image-upload" accept="image/*">
+                </label>
+                <img id="image-preview" class="image-preview" style="display: none;">
+            </div>
+            <select id="variation-model" class="model-select">
+                <option value="sdxl-turbo">SDXL Turbo</option>
+            </select>
+            <button class="generate-variations-button">Generate Variations</button>
+            <div class="variation-results"></div>
+        </div>
+    </div>
+
+    <!-- Swagger UI Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-bundle.js"></script>
+    <!-- Swagger UI Standalone Preset -->
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.11.0/swagger-ui-standalone-preset.js"></script>
+    
+    <script>
+        window.onload = function() {
+            // Initialize Swagger UI
+            const ui = SwaggerUIBundle({
+                url: "/openapi.json",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                plugins: [
+                    SwaggerUIBundle.plugins.DownloadUrl
+                ],
+                layout: "StandaloneLayout"
+            });
+            window.ui = ui;
+        };
+    </script>
+
+    <!-- Our custom JavaScript -->
+    <script src="/static/custom-swagger.js"></script>
+</body>
+</html> 
