@@ -107,8 +107,17 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 messages=messages,
                 web_search=False
             )
-
             content = response.choices[0].message.content
+
+            # Detect the abnormal traffic message
+            if "流量异常" in content or "abnormal traffic" in content.lower():
+                print("[ERROR] Provider returned abnormal traffic error.")
+                if attempt < max_retries - 1:
+                    continue  # Try again with next provider
+                else:
+                    return {
+                        "error": "Your IP has been rate-limited or blocked by the upstream provider. Please try again later or use a different network."
+                    }
 
             if json_mode:
                 try:
@@ -125,11 +134,9 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 return content  # If no json_mode, just return plain response
         except Exception as e:
             if attempt < max_retries - 1:
-                # Log the error but continue to retry
                 print(f"Attempt {attempt+1} failed: {str(e)}")
                 continue
             else:
-                # On the last attempt, raise the exception
                 raise e
 
 def get_available_models(providers):
