@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from aiohttp import ClientSession, FormData
 
 from ...typing import AsyncResult, Messages
@@ -8,29 +9,58 @@ from ...requests import raise_for_status
 from ..base_provider import AsyncGeneratorProvider, ProviderModelMixin
 from ..helper import format_prompt, get_last_user_message
 from ...providers.response import JsonConversation, TitleGeneration
+from ...errors import ModelNotFoundError
+from ... import debug
+
 
 class CohereForAI_C4AI_Command(AsyncGeneratorProvider, ProviderModelMixin):
     label = "CohereForAI C4AI Command"
-    url = "https://cohereforai-c4ai-command.hf.space"
+    url = "https://coherelabs-c4ai-command.hf.space"
     conversation_url = f"{url}/conversation"
 
     working = True
 
     default_model = "command-a-03-2025"
+    models = [
+        default_model,
+        "command-r-plus-08-2024",
+        "command-r-08-2024",
+        "command-r-plus",
+        "command-r",
+        "command-r7b-12-2024",
+        "command-r7b-arabic-02-2025",
+    ]
+    
     model_aliases = {
         "command-a": default_model,
-        "command-r-plus": "command-r-plus-08-2024",
+        "command-r-plus": ["command-r-plus-08-2024", "command-r-plus"],
         "command-r": "command-r-08-2024",
-        "command-r": "command-r",
-        "command-r7b": "command-r7b-12-2024",
-    }
-    models = list(model_aliases.keys())
+        "command-r7b": ["command-r7b-12-2024", "command-r7b-arabic-02-2025"],
+     }
 
     @classmethod
-    def get_model(cls, model: str, **kwargs) -> str:
-        if model in cls.model_aliases.values():
+    def get_model(cls, model: str) -> str:
+        """Get the internal model name from the user-provided model name."""
+        
+        if not model:
+            return cls.default_model
+        
+        # Check if the model exists directly in our models list
+        if model in cls.models:
             return model
-        return super().get_model(model, **kwargs)
+        
+        # Check if there's an alias for this model
+        if model in cls.model_aliases:
+            alias = cls.model_aliases[model]
+            # If the alias is a list, randomly select one of the options
+            if isinstance(alias, list):
+                selected_model = random.choice(alias)
+                debug.log(f"{cls.__name__}: Selected model '{selected_model}' from alias '{model}'")
+                return selected_model
+            debug.log(f"{cls.__name__}: Using model '{alias}' for alias '{model}'")
+            return alias
+        
+        raise ModelNotFoundError(f"Model {model} not found")
 
     @classmethod
     async def create_async_generator(
@@ -38,7 +68,7 @@ class CohereForAI_C4AI_Command(AsyncGeneratorProvider, ProviderModelMixin):
         api_key: str = None, 
         proxy: str = None,
         conversation: JsonConversation = None,
-        return_conversation: bool = False,
+        return_conversation: bool = True,
         **kwargs
     ) -> AsyncResult:
         model = cls.get_model(model)

@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import asyncio
 from g4f.client import Client
-from g4f.Provider import RetryProvider, OpenaiChat, FreeChatgpt, Liaobots, PollinationsAI, PollinationsImage, Midjourney
+from g4f.Provider import RetryProvider, OpenaiChat, Free2GPT, FreeGpt, LambdaChat, PollinationsAI, PollinationsImage, ImageLabs
 import os
 import uvicorn
 import json
@@ -46,8 +46,8 @@ app.add_middleware(
 g4f.debug.logging = True
 g4f.debug.version_check = False
 
-text_providers = [OpenaiChat, FreeChatgpt, Liaobots]
-image_providers = [PollinationsAI, PollinationsImage, Midjourney]
+text_providers = [OpenaiChat, Free2GPT, FreeGpt, LambdaChat]
+image_providers = [PollinationsAI, PollinationsImage, ImageLabs]
 
 client = Client(
     provider=RetryProvider(text_providers, shuffle=True),
@@ -127,6 +127,24 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 # On the last attempt, raise the exception
                 raise e
 
+def get_available_models(providers):
+    models = []
+    for provider in providers:
+        try:
+            models += provider.get_models()
+        except Exception as e:
+            print(f"{provider.__name__} error: {e}")
+    return list(set(models))
+
+def get_available_image_models(providers):
+    image_models = []
+    for provider in providers:
+        try:
+            image_models += provider.get_models()
+        except Exception as e:
+            print(f"{provider.__name__} error: {e}")
+    return list(set(image_models))
+
 @app.post("/chat/")
 async def chat(ai_request: AIRequest):
     messages = ai_request.messages
@@ -134,8 +152,8 @@ async def chat(ai_request: AIRequest):
     json_mode = ai_request.json_mode
     stream = ai_request.stream
 
-    # Validate model
-    available_models = client.models.get_all()
+    # Validate model using all text providers
+    available_models = get_available_models(text_providers)
     if model not in available_models:
         return {"error": f"Model '{model}' is not available. Please choose from: {available_models}"}
 
@@ -187,7 +205,7 @@ async def generate_image(image_request: ImageRequest):
     response_format = image_request.response_format
 
     # Validate image model
-    available_image_models = client.models.get_image()
+    available_image_models = get_available_image_models(image_providers)
     if model not in available_image_models:
         return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
 
@@ -218,7 +236,7 @@ async def create_image_variation(
     response_format: str = Form("url")
 ):
     # Validate image model
-    available_image_models = client.models.get_image()
+    available_image_models = get_available_image_models(image_providers)
     if model not in available_image_models:
         return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
     try:
@@ -254,20 +272,12 @@ async def create_image_variation(
 
 @app.get("/models/")
 async def list_models():
-    # Dynamically get available models from the g4f client
-    try:
-        models = client.models.get_all()
-    except Exception as e:
-        models = []
+    models = get_available_models(text_providers)
     return {"models": models}
 
 @app.get("/models/image/")
 async def list_image_models():
-    # Dynamically get available image models from the g4f client
-    try:
-        image_models = client.models.get_image()
-    except Exception as e:
-        image_models = []
+    image_models = get_available_image_models(image_providers)
     return {"models": image_models}
 
 @app.get("/openapi.json")

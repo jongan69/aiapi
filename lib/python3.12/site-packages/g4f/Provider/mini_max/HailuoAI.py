@@ -25,7 +25,7 @@ class HailuoAI(AsyncAuthedProvider, ProviderModelMixin):
     working = True
     use_nodriver = True
     supports_stream = True
-    default_model = "MiniMax"
+    default_model = "minimax"
 
     @classmethod
     async def on_auth_async(cls, proxy: str = None, **kwargs) -> AsyncIterator:
@@ -48,7 +48,7 @@ class HailuoAI(AsyncAuthedProvider, ProviderModelMixin):
         model: str,
         messages: Messages,
         auth_result: AuthResult,
-        return_conversation: bool = False,
+        return_conversation: bool = True,
         conversation: Conversation = None,
         **kwargs
     ) -> AsyncResult:
