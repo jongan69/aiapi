@@ -510,7 +510,7 @@
                 <img id="image-preview" class="image-preview" style="display: none;">
             </div>
             <select id="variation-model" class="model-select">
-                <option value="sdxl-turbo">SDXL Turbo</option>
+                <option value="">Loading models...</option>
             </select>
             <button class="generate-variations-button">Generate Variations</button>
             <div class="variation-results"></div>
@@ -544,5 +544,37 @@
 
     <!-- Our custom JavaScript -->
     <script src="/static/custom-swagger.js"></script>
+    <script>
+    document.addEventListener("DOMContentLoaded", function() {
+        // Fetch available image variation models
+        fetch("/models/image/variation/")
+            .then(response => response.json())
+            .then(data => {
+                const select = document.getElementById("variation-model");
+                select.innerHTML = ""; // Clear loading option
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(model => {
+                        const option = document.createElement("option");
+                        option.value = model;
+                        option.textContent = model;
+                        select.appendChild(option);
+                    });
+                } else {
+                    const option = document.createElement("option");
+                    option.value = "";
+                    option.textContent = "No models available";
+                    select.appendChild(option);
+                }
+            })
+            .catch(error => {
+                const select = document.getElementById("variation-model");
+                select.innerHTML = "";
+                const option = document.createElement("option");
+                option.value = "";
+                option.textContent = "Error loading models";
+                select.appendChild(option);
+            });
+    });
+    </script>
 </body>
 </html> 

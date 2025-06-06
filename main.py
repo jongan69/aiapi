@@ -1,9 +1,9 @@
-from fastapi import FastAPI, UploadFile, File, Form, Request
+from fastapi import FastAPI, UploadFile, File, Form, Request, Body
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import asyncio
-from g4f.client import Client
-from g4f.Provider import RetryProvider, OpenaiChat, Free2GPT, FreeGpt, LambdaChat, PollinationsAI, PollinationsImage, ImageLabs
+from g4f.client import Client, AsyncClient
+from g4f.Provider import RetryProvider, OpenaiChat, Free2GPT, FreeGpt, LambdaChat, PollinationsAI, PollinationsImage, ImageLabs, HuggingFaceMedia
 import os
 import uvicorn
 import json
@@ -270,6 +270,125 @@ async def create_image_variation(
         else:
             return {"error": f"Error generating image variation: {error_message}"}
 
+@app.post("/images/variations/async/")
+async def create_image_variation_async(
+    file: UploadFile = File(...),
+    prompt: Optional[str] = Form(None),
+    model: str = Form("dall-e-3"),
+    response_format: str = Form("url"),
+    width: Optional[int] = Form(None),
+    height: Optional[int] = Form(None),
+    n: Optional[int] = Form(1)
+):
+    available_image_models = get_available_image_models(image_providers)
+    if model not in available_image_models:
+        return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
+    try:
+        image_data = await file.read()
+        image_file = io.BytesIO(image_data)
+        image_file.name = file.filename
+        image_client = AsyncClient(image_provider=client.image_provider)
+        kwargs = {"prompt": prompt, "image": image_file, "model": model, "response_format": response_format}
+        if width: kwargs["width"] = width
+        if height: kwargs["height"] = height
+        if n: kwargs["n"] = n
+        response = await image_client.images.create_variation(**kwargs)
+        if response_format == "url":
+            return {"urls": [img.url for img in response.data]}
+        else:
+            return {"b64_jsons": [img.b64_json for img in response.data]}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/models/audio/")
+async def list_audio_models():
+    audio_models = []
+    # Add more providers if you have them
+    for provider in [PollinationsAI]:
+        try:
+            if hasattr(provider, "audio_models") and provider.audio_models:
+                audio_models += provider.audio_models
+            elif hasattr(provider, "get_models"):
+                audio_models += [m for m in provider.get_models() if "audio" in m]
+        except Exception as e:
+            print(f"{provider.__name__} error: {e}")
+    audio_models = list(set(audio_models))
+    return {"models": audio_models}
+
+@app.post("/audio/generate/")
+async def generate_audio(
+    text: str = Body(...),
+    model: str = Body(...),
+    voice: str = Body("alloy"),
+    format: str = Body("mp3")
+):
+    available_audio_models = (await list_audio_models())["models"]
+    if model not in available_audio_models:
+        return {"error": f"Audio model '{model}' is not available. Please choose from: {available_audio_models}"}
+    try:
+        audio_client = AsyncClient(provider=client.provider)
+        response = await audio_client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": text}],
+            audio={"voice": voice, "format": format},
+        )
+        audio_bytes = response.choices[0].message.content
+        return {"audio": audio_bytes}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/audio/transcribe/")
+async def transcribe_audio(
+    file: UploadFile = File(...),
+    model: str = Form(...)
+):
+    available_audio_models = (await list_audio_models())["models"]
+    if model not in available_audio_models:
+        return {"error": f"Audio model '{model}' is not available. Please choose from: {available_audio_models}"}
+    try:
+        audio_data = await file.read()
+        audio_file = io.BytesIO(audio_data)
+        audio_file.name = file.filename
+        audio_client = AsyncClient(provider=client.provider)
+        response = await audio_client.chat.completions.create(
+            messages=[{"role": "user", "content": "Transcribe this audio"}],
+            media=[[audio_file, file.filename]],
+            modalities=["text"],
+            model=model
+        )
+        return {"transcription": response.choices[0].message.content}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/video/generate/")
+async def generate_video(
+    prompt: str = Body(...),
+    model: str = Body(...),
+    resolution: str = Body("720p"),
+    aspect_ratio: str = Body("16:9"),
+    n: int = Body(1),
+    response_format: str = Body("url")
+):
+    available_video_models = (await list_video_models())["models"]
+    if model not in available_video_models:
+        return {"error": f"Video model '{model}' is not available. Please choose from: {available_video_models}"}
+    try:
+        video_client = AsyncClient(
+            provider=HuggingFaceMedia,
+            api_key=os.getenv("HF_TOKEN")
+        )
+        result = await video_client.media.generate(
+            model=model,
+            prompt=prompt,
+            resolution=resolution,
+            aspect_ratio=aspect_ratio,
+            n=n,
+            response_format=response_format,
+        )
+        return {"urls": [video.url for video in result.data]}
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/models/")
 async def list_models():
     models = get_available_models(text_providers)
@@ -277,6 +396,27 @@ async def list_models():
 
 @app.get("/models/image/")
 async def list_image_models():
+    image_models = get_available_image_models(image_providers)
+    return {"models": image_models}
+
+@app.get("/models/video/")
+async def list_video_models():
+    try:
+        video_client = AsyncClient(
+            provider=HuggingFaceMedia,
+            api_key=os.getenv("HF_TOKEN")
+        )
+        video_models = video_client.models.get_video()
+        return {"models": video_models}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/models/image/variation/")
+async def list_image_variation_models():
+    """
+    Returns all available image models that can be used for image variation.
+    Note: Not all models may actually support variation, but this is the full list from your providers.
+    """
     image_models = get_available_image_models(image_providers)
     return {"models": image_models}
 
