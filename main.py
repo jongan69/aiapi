@@ -355,6 +355,10 @@ async def get_openapi_endpoint():
 async def custom_swagger_ui(request: Request):
     return templates.TemplateResponse("swagger-ui.html", {"request": request})
 
+@app.get("/healthz")
+async def health_check():
+    return {"status": "ok"}
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
