@@ -1,9 +1,8 @@
-from fastapi import FastAPI, Body, UploadFile, File, Form, Request
+from fastapi import FastAPI, UploadFile, File, Form, Request
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any, Literal
+from typing import List, Optional, Dict, Any
 import asyncio
 from g4f.client import Client
-from g4f.Provider import OpenaiChat
 import os
 import uvicorn
 import json
@@ -13,7 +12,6 @@ from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi import Request
 import base64
 import io
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -50,105 +48,6 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Set up templates
 templates = Jinja2Templates(directory="templates")
-
-# Define all available models
-AVAILABLE_MODELS = [
-    # OpenAI models
-    "gpt-4", "gpt-4o", "gpt-4o-mini", "gpt-4o-audio", "o1", "o1-mini", "o3-mini",
-    
-    # Meta models
-    "meta-ai", "llama-2-7b", "llama-3-8b", "llama-3-70b", 
-    "llama-3.1-8b", "llama-3.1-70b", "llama-3.1-405b",
-    "llama-3.2-1b", "llama-3.2-3b", "llama-3.2-11b", "llama-3.2-90b",
-    "llama-3.3-70b",
-    
-    # Mistral models
-    "mixtral-8x7b", "mixtral-8x22b", "mistral-nemo", "mixtral-small-24b",
-    
-    # NousResearch models
-    "hermes-3",
-    
-    # Microsoft models
-    "phi-3.5-mini", "phi-4", "wizardlm-2-7b", "wizardlm-2-8x22b",
-    
-    # Google models
-    "gemini-2.0", "gemini-exp", "gemini-1.5-pro", "gemini-1.5-flash",
-    "gemini-2.0-flash", "gemini-2.0-flash-thinking", "gemini-2.0-flash-thinking-with-apps",
-    
-    # Anthropic models
-    "claude-3-haiku", "claude-3.5-sonnet", "claude-3.7-sonnet",
-    
-    # Reka AI models
-    "reka-core",
-    
-    # Blackbox AI models
-    "blackboxai", "blackboxai-pro",
-    
-    # CohereForAI models
-    "command-r", "command-r-plus", "command-r7b", "command-a",
-    
-    # GigaChat models
-    "GigaChat:latest",
-    
-    # Qwen models
-    "qwen-1.5-7b", "qwen-2-72b", "qwen-2-vl-7b", "qwen-2.5", "qwen-2.5-72b",
-    "qwen-2.5-coder-32b", "qwen-2.5-1m", "qwen-2-5-max", "qwq-32b", "qvq-72b",
-    
-    # Inflection models
-    "pi",
-    
-    # x.ai models
-    "grok-3",
-    
-    # Perplexity AI models
-    "sonar", "sonar-pro", "sonar-reasoning", "sonar-reasoning-pro", "r1-1776",
-    
-    # DeepSeek models
-    "deepseek-chat", "deepseek-v3", "deepseek-r1",
-    
-    # Nvidia models
-    "nemotron-70b",
-    
-    # Databricks models
-    "dbrx-instruct",
-    
-    # THUDM models
-    "glm-4",
-    
-    # MiniMax models
-    "MiniMax",
-    
-    # 01-ai models
-    "yi-34b",
-    
-    # Cognitive Computations models
-    "dolphin-2.6", "dolphin-2.9",
-    
-    # DeepInfra models
-    "airoboros-70b",
-    
-    # Lizpreciatior models
-    "lzlv-70b",
-    
-    # OpenBMB models
-    "minicpm-2.5",
-    
-    # Ai2 models
-    "olmo-1-7b", "olmo-2-13b", "olmo-2-32b", "olmo-4-synthetic",
-    "tulu-3-1-8b", "tulu-3-70b", "tulu-3-405b",
-    
-    # Liquid AI models
-    "lfm-40b",
-    
-    # Uncensored AI models
-    "evil"
-]
-
-# Define available image models
-IMAGE_MODELS = [
-    "sdxl-turbo", "sd-3.5", "flux", "flux-pro", "flux-dev", "flux-schnell",
-    "dall-e-3", "midjourney"
-]
 
 class AIRequest(BaseModel):
     messages: List[Dict[str, str]]
@@ -224,6 +123,11 @@ async def chat(ai_request: AIRequest):
     json_mode = ai_request.json_mode
     stream = ai_request.stream
 
+    # Validate model
+    available_models = client.models.get_all()
+    if model not in available_models:
+        return {"error": f"Model '{model}' is not available. Please choose from: {available_models}"}
+
     try:
         if stream:
             async def generate_stream():
@@ -233,24 +137,18 @@ async def chat(ai_request: AIRequest):
                     stream=True,
                     web_search=False
                 )
-                
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
                         content = chunk.choices[0].delta.content
-                        # For streaming, we don't validate JSON - just pass through the content
                         yield f"data: {json.dumps({'content': content})}\n\n"
-                
                 yield "data: [DONE]\n\n"
-
             return StreamingResponse(
                 generate_stream(),
                 media_type="text/event-stream"
             )
-
         if ai_request.wrap_input:
             user_msgs = [msg["content"] for msg in messages if msg["role"] == "user"]
             base_messages = [msg for msg in messages if msg["role"] != "user"]
-            
             all_chunks = []
             for user_msg in user_msgs:
                 chunks = chunk_text(user_msg, ai_request.chunk_size)
@@ -261,10 +159,7 @@ async def chat(ai_request: AIRequest):
                 combined = "\n\n".join([summary if isinstance(summary, str) else json.dumps(summary) for summary in summaries])
                 final_response = await call_model(base_messages + [{"role": "user", "content": combined}], model, json_mode)
                 all_chunks.append(final_response)
-            
             return {"response": all_chunks}
-        
-        # For non-streaming requests, we use call_model which handles JSON validation
         final_response = await call_model(messages, model, json_mode)
         return {"response": final_response}
     except Exception as e:
@@ -279,7 +174,12 @@ async def generate_image(image_request: ImageRequest):
     prompt = image_request.prompt
     model = image_request.model
     response_format = image_request.response_format
-    
+
+    # Validate image model
+    available_image_models = client.models.get_image()
+    if model not in available_image_models:
+        return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
+
     try:
         response = await asyncio.to_thread(
             client.images.generate,
@@ -287,7 +187,6 @@ async def generate_image(image_request: ImageRequest):
             prompt=prompt,
             response_format=response_format
         )
-        
         if response_format == "url":
             return {"url": response.data[0].url}
         else:
@@ -307,21 +206,21 @@ async def create_image_variation(
     model: str = Form("sdxl-turbo"),
     response_format: str = Form("url")
 ):
+    # Validate image model
+    available_image_models = client.models.get_image()
+    if model not in available_image_models:
+        return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
     try:
         # Read the uploaded file
         image_data = await file.read()
-        
         # Create a client
         image_client = Client()
-        
         # Create a BytesIO object from the image data
         image_io = io.BytesIO(image_data)
-        
         # For sdxl-turbo, we'll use the generate endpoint with the image as a prompt
         # Convert the image to base64 for the prompt
         base64_image = base64.b64encode(image_data).decode('utf-8')
         prompt = f"Create a variation of this image: data:image/jpeg;base64,{base64_image}"
-        
         # Generate image variations
         response = await asyncio.to_thread(
             image_client.images.generate,
@@ -329,7 +228,6 @@ async def create_image_variation(
             model=model,
             response_format=response_format
         )
-        
         if response_format == "url":
             return {"url": response.data[0].url}
         else:
@@ -345,11 +243,21 @@ async def create_image_variation(
 
 @app.get("/models/")
 async def list_models():
-    return {"models": AVAILABLE_MODELS}
+    # Dynamically get available models from the g4f client
+    try:
+        models = client.models.get_all()
+    except Exception as e:
+        models = []
+    return {"models": models}
 
 @app.get("/models/image/")
 async def list_image_models():
-    return {"models": IMAGE_MODELS}
+    # Dynamically get available image models from the g4f client
+    try:
+        image_models = client.models.get_image()
+    except Exception as e:
+        image_models = []
+    return {"models": image_models}
 
 @app.get("/openapi.json")
 async def get_openapi_endpoint():
