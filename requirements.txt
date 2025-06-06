@@ -32,3 +32,4 @@ python-multipart==0.0.20
 # nodriver==0.45.2 # Remove to disable browser automation
 platformdirs==4.3.7
 apscheduler==3.11.0
+python-dotenv==1.1.0
