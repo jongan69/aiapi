@@ -1,3 +1,5 @@
+import io
+import os
 from fastapi import FastAPI, UploadFile, File, Form, Request, Body
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
@@ -12,9 +14,12 @@ from fastapi.templating import Jinja2Templates
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi import Request
 import base64
-import io
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+from g4f.client import AsyncClient
+from g4f.Provider import HuggingFaceMedia
+import g4f.Provider as Provider
+from g4f.client import Client
 import g4f.debug
 
 app = FastAPI(
@@ -147,16 +152,16 @@ def get_available_image_models(providers):
 
 @app.post("/chat/")
 async def chat(ai_request: AIRequest):
+    print("[DEBUG] /chat/ called with:", ai_request)
     messages = ai_request.messages
     model = ai_request.model
     json_mode = ai_request.json_mode
     stream = ai_request.stream
-
-    # Validate model using all text providers
     available_models = get_available_models(text_providers)
+    print("[DEBUG] Available text models:", available_models)
     if model not in available_models:
+        print(f"[ERROR] Model '{model}' not available.")
         return {"error": f"Model '{model}' is not available. Please choose from: {available_models}"}
-
     try:
         if stream:
             async def generate_stream():
@@ -169,8 +174,10 @@ async def chat(ai_request: AIRequest):
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
                         content = chunk.choices[0].delta.content
+                        print("[DEBUG] Streaming chunk:", content)
                         yield f"data: {json.dumps({'content': content})}\n\n"
                 yield "data: [DONE]\n\n"
+            print("[DEBUG] Returning streaming response.")
             return StreamingResponse(
                 generate_stream(),
                 media_type="text/event-stream"
@@ -181,6 +188,7 @@ async def chat(ai_request: AIRequest):
             all_chunks = []
             for user_msg in user_msgs:
                 chunks = chunk_text(user_msg, ai_request.chunk_size)
+                print("[DEBUG] Chunks for wrap_input:", chunks)
                 summaries = await asyncio.gather(*[
                     call_model(base_messages + [{"role": "user", "content": chunk}], model, json_mode)
                     for chunk in chunks
@@ -188,11 +196,14 @@ async def chat(ai_request: AIRequest):
                 combined = "\n\n".join([summary if isinstance(summary, str) else json.dumps(summary) for summary in summaries])
                 final_response = await call_model(base_messages + [{"role": "user", "content": combined}], model, json_mode)
                 all_chunks.append(final_response)
+            print("[DEBUG] wrap_input all_chunks:", all_chunks)
             return {"response": all_chunks}
         final_response = await call_model(messages, model, json_mode)
+        print("[DEBUG] Final response:", final_response)
         return {"response": final_response}
     except Exception as e:
         error_message = str(e)
+        print("[ERROR] Exception in /chat/:", error_message)
         if "ProviderNotFoundError" in error_message:
             return {"error": f"Model '{model}' is not supported. Please try a different model."}
         else:
@@ -200,15 +211,15 @@ async def chat(ai_request: AIRequest):
 
 @app.post("/images/generate/")
 async def generate_image(image_request: ImageRequest):
+    print("[DEBUG] /images/generate/ called with:", image_request)
     prompt = image_request.prompt
     model = image_request.model
     response_format = image_request.response_format
-
-    # Validate image model
     available_image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models:", available_image_models)
     if model not in available_image_models:
+        print(f"[ERROR] Image model '{model}' not available.")
         return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
-
     try:
         response = await asyncio.to_thread(
             client.images.generate,
@@ -216,12 +227,14 @@ async def generate_image(image_request: ImageRequest):
             prompt=prompt,
             response_format=response_format
         )
+        print("[DEBUG] Image generation response:", response)
         if response_format == "url":
             return {"url": response.data[0].url}
         else:
             return {"b64_json": response.data[0].b64_json}
     except Exception as e:
         error_message = str(e)
+        print("[ERROR] Exception in /images/generate/:", error_message)
         if "MissingAuthError" in error_message:
             return {"error": f"Authentication required for model '{model}'. Please try a different model or configure authentication."}
         elif "ProviderNotFoundError" in error_message:
@@ -235,34 +248,33 @@ async def create_image_variation(
     model: str = Form("sdxl-turbo"),
     response_format: str = Form("url")
 ):
-    # Validate image model
+    print("[DEBUG] /images/variations/ called with model:", model, "response_format:", response_format)
     available_image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models:", available_image_models)
     if model not in available_image_models:
+        print(f"[ERROR] Image model '{model}' not available.")
         return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
     try:
-        # Read the uploaded file
         image_data = await file.read()
-        # Create a client
+        print("[DEBUG] Uploaded image size:", len(image_data))
         image_client = Client()
-        # Create a BytesIO object from the image data
         image_io = io.BytesIO(image_data)
-        # For sdxl-turbo, we'll use the generate endpoint with the image as a prompt
-        # Convert the image to base64 for the prompt
         base64_image = base64.b64encode(image_data).decode('utf-8')
         prompt = f"Create a variation of this image: data:image/jpeg;base64,{base64_image}"
-        # Generate image variations
         response = await asyncio.to_thread(
             image_client.images.generate,
             prompt=prompt,
             model=model,
             response_format=response_format
         )
+        print("[DEBUG] Image variation response:", response)
         if response_format == "url":
             return {"url": response.data[0].url}
         else:
             return {"b64_json": response.data[0].b64_json}
     except Exception as e:
         error_message = str(e)
+        print("[ERROR] Exception in /images/variations/:", error_message)
         if "MissingAuthError" in error_message:
             return {"error": f"Authentication required for model '{model}'. Please try a different model or configure authentication."}
         elif "ProviderNotFoundError" in error_message:
@@ -280,11 +292,15 @@ async def create_image_variation_async(
     height: Optional[int] = Form(None),
     n: Optional[int] = Form(1)
 ):
+    print("[DEBUG] /images/variations/async/ called with model:", model, "response_format:", response_format)
     available_image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models:", available_image_models)
     if model not in available_image_models:
+        print(f"[ERROR] Image model '{model}' not available.")
         return {"error": f"Image model '{model}' is not available. Please choose from: {available_image_models}"}
     try:
         image_data = await file.read()
+        print("[DEBUG] Uploaded image size:", len(image_data))
         image_file = io.BytesIO(image_data)
         image_file.name = file.filename
         image_client = AsyncClient(image_provider=client.image_provider)
@@ -292,12 +308,15 @@ async def create_image_variation_async(
         if width: kwargs["width"] = width
         if height: kwargs["height"] = height
         if n: kwargs["n"] = n
+        print("[DEBUG] Variation kwargs:", kwargs)
         response = await image_client.images.create_variation(**kwargs)
+        print("[DEBUG] Image variation async response:", response)
         if response_format == "url":
             return {"urls": [img.url for img in response.data]}
         else:
             return {"b64_jsons": [img.b64_json for img in response.data]}
     except Exception as e:
+        print("[ERROR] Exception in /images/variations/async/:", str(e))
         return {"error": str(e)}
 
 @app.get("/models/audio/")
@@ -319,22 +338,22 @@ async def list_audio_models():
 async def generate_audio(
     text: str = Body(...),
     model: str = Body(...),
-    voice: str = Body("alloy"),
+    voice: str = Body("coral"),
     format: str = Body("mp3")
 ):
-    available_audio_models = (await list_audio_models())["models"]
-    if model not in available_audio_models:
-        return {"error": f"Audio model '{model}' is not available. Please choose from: {available_audio_models}"}
+    print("[DEBUG] /audio/generate/ called with text:", text, "model:", model, "voice:", voice, "format:", format)
     try:
-        audio_client = AsyncClient(provider=client.provider)
-        response = await audio_client.chat.completions.create(
+        client = Client(provider=Provider.OpenAIFM)
+        response = client.media.generate(
+            text,
             model=model,
-            messages=[{"role": "user", "content": text}],
-            audio={"voice": voice, "format": format},
+            audio={"voice": voice, "format": format}
         )
-        audio_bytes = response.choices[0].message.content
-        return {"audio": audio_bytes}
+        print("[DEBUG] Audio generation response:", response)
+        audio_bytes = response.data[0].audio
+        return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
     except Exception as e:
+        print("[ERROR] Exception in /audio/generate/:", str(e))
         return {"error": str(e)}
 
 @app.post("/audio/transcribe/")
@@ -342,11 +361,15 @@ async def transcribe_audio(
     file: UploadFile = File(...),
     model: str = Form(...)
 ):
+    print("[DEBUG] /audio/transcribe/ called with model:", model)
     available_audio_models = (await list_audio_models())["models"]
+    print("[DEBUG] Available audio models:", available_audio_models)
     if model not in available_audio_models:
+        print(f"[ERROR] Audio model '{model}' not available.")
         return {"error": f"Audio model '{model}' is not available. Please choose from: {available_audio_models}"}
     try:
         audio_data = await file.read()
+        print("[DEBUG] Uploaded audio size:", len(audio_data))
         audio_file = io.BytesIO(audio_data)
         audio_file.name = file.filename
         audio_client = AsyncClient(provider=client.provider)
@@ -356,8 +379,10 @@ async def transcribe_audio(
             modalities=["text"],
             model=model
         )
+        print("[DEBUG] Audio transcription response:", response)
         return {"transcription": response.choices[0].message.content}
     except Exception as e:
+        print("[ERROR] Exception in /audio/transcribe/:", str(e))
         return {"error": str(e)}
 
 @app.post("/video/generate/")
@@ -369,9 +394,7 @@ async def generate_video(
     n: int = Body(1),
     response_format: str = Body("url")
 ):
-    available_video_models = (await list_video_models())["models"]
-    if model not in available_video_models:
-        return {"error": f"Video model '{model}' is not available. Please choose from: {available_video_models}"}
+    print("[DEBUG] /video/generate/ called with prompt:", prompt, "model:", model, "resolution:", resolution, "aspect_ratio:", aspect_ratio, "n:", n, "response_format:", response_format)
     try:
         video_client = AsyncClient(
             provider=HuggingFaceMedia,
@@ -385,43 +408,60 @@ async def generate_video(
             n=n,
             response_format=response_format,
         )
+        print("[DEBUG] Video generation response:", result)
         return {"urls": [video.url for video in result.data]}
     except Exception as e:
+        print("[ERROR] Exception in /video/generate/:", str(e))
         return {"error": str(e)}
 
 @app.get("/models/")
 async def list_models():
+    print("[DEBUG] /models/ called")
     models = get_available_models(text_providers)
+    print("[DEBUG] Available text models:", models)
     return {"models": models}
 
 @app.get("/models/image/")
 async def list_image_models():
+    print("[DEBUG] /models/image/ called")
     image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models:", image_models)
     return {"models": image_models}
 
 @app.get("/models/video/")
 async def list_video_models():
+    print("[DEBUG] /models/video/ called")
     try:
         video_client = AsyncClient(
             provider=HuggingFaceMedia,
             api_key=os.getenv("HF_TOKEN")
         )
         video_models = video_client.models.get_video()
+        print("[DEBUG] Available video models:", video_models)
         return {"models": video_models}
     except Exception as e:
+        print("[ERROR] Exception in /models/video/:", str(e))
         return {"error": str(e)}
 
 @app.get("/models/image/variation/")
 async def list_image_variation_models():
-    """
-    Returns all available image models that can be used for image variation.
-    Note: Not all models may actually support variation, but this is the full list from your providers.
-    """
+    print("[DEBUG] /models/image/variation/ called")
     image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models for variation:", image_models)
     return {"models": image_models}
+
+@app.get("/models/audio/voices/")
+async def list_audio_voices():
+    print("[DEBUG] /models/audio/voices/ called")
+    voices = [
+        "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"
+    ]
+    print("[DEBUG] Available voices:", voices)
+    return {"voices": voices}
 
 @app.get("/openapi.json")
 async def get_openapi_endpoint():
+    print("[DEBUG] /openapi.json called")
     return get_openapi(
         title=app.title,
         version=app.version,
@@ -436,6 +476,7 @@ async def custom_swagger_ui(request: Request):
 
 @app.get("/healthz")
 async def health_check():
+    print("[DEBUG] /healthz called")
     return {"status": "ok"}
 
 if __name__ == "__main__":
