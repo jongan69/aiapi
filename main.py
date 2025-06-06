@@ -344,7 +344,8 @@ async def generate_audio(
     print("[DEBUG] /audio/generate/ called with text:", text, "model:", model, "voice:", voice, "format:", format)
     try:
         client = Client(provider=Provider.OpenAIFM)
-        response = client.media.generate(
+        response = await asyncio.to_thread(
+            client.media.generate,
             text,
             model=model,
             audio={"voice": voice, "format": format}
