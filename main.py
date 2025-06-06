@@ -15,6 +15,7 @@ import base64
 import io
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="AI API",
@@ -33,6 +34,15 @@ app = FastAPI(
     docs_url=None,  # Disable default docs
     redoc_url=None  # Disable redoc
 )
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 client = Client()
 
 # Mount static files
