@@ -11,7 +11,7 @@ import uvicorn
 import json
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
 from fastapi import Request
 import base64
 from fastapi.openapi.utils import get_openapi
@@ -21,6 +21,7 @@ from g4f.Provider import HuggingFaceMedia
 import g4f.Provider as Provider
 from g4f.client import Client
 import g4f.debug
+import re
 
 app = FastAPI(
     title="AI API",
@@ -346,22 +347,64 @@ async def generate_audio(
     text: str = Body(...),
     model: str = Body(...),
     voice: str = Body("coral"),
-    format: str = Body("mp3")
+    format: str = Body("mp3"),
+    provider: str = Body(None)  # Optional: let user specify provider
 ):
-    print("[DEBUG] /audio/generate/ called with text:", text, "model:", model, "voice:", voice, "format:", format)
+    print("[DEBUG] /audio/generate/ called with text:", text, "model:", model, "voice:", voice, "format:", format, "provider:", provider)
     try:
-        client = Client(provider=Provider.OpenAIFM)
-        response = await asyncio.to_thread(
-            client.media.generate,
-            text,
-            model=model,
-            audio={"voice": voice, "format": format}
-        )
-        print("[DEBUG] Audio generation response:", response)
-        audio_bytes = response.data[0].audio
-        return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
+        # Decide provider if not explicitly set
+        if not provider:
+            if model in ["gpt-4o-mini-tts"]:
+                provider = "OpenAIFM"
+            elif model in ["openai-audio", "hypnosis-tracy"]:
+                provider = "PollinationsAI"
+            else:
+                provider = "OpenAIFM"  # Default fallback
+
+        if provider == "OpenAIFM":
+            client = Client(provider=Provider.OpenAIFM)
+            response = await asyncio.to_thread(
+                client.media.generate,
+                text,
+                model=model,
+                audio={"voice": voice, "format": format}
+            )
+            print("[DEBUG] OpenAIFM audio generation response:", response)
+            audio_bytes = response.data[0].audio
+            return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
+        elif provider == "PollinationsAI":
+            client = AsyncClient(provider=Provider.PollinationsAI)
+            response = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": text}],
+                audio={"voice": voice, "format": format}
+            )
+            print("[DEBUG] PollinationsAI audio generation response:", response)
+            audio_response = response.choices[0].message.content
+            print("[DEBUG] PollinationsAI audio generation response:", audio_response)
+            # Always try to extract the file path from the string representation
+            audio_response_str = str(audio_response)
+            match = re.search(r'src="([^"]+)"', audio_response_str)
+            if match:
+                file_path = match.group(1)
+                # Remove query params if present
+                file_path = file_path.split('?')[0]
+                # If the path is /media/..., convert to generated_media/...
+                if file_path.startswith('/media/'):
+                    file_path = os.path.join('generated_media', file_path[len('/media/'):])
+                elif file_path.startswith('/'):
+                    file_path = os.path.join('.', file_path.lstrip('/'))
+                print("[DEBUG] Resolved file path:", file_path)
+                print("[DEBUG] Returning audio file:", file_path)
+                return FileResponse(file_path, media_type="audio/mpeg", filename=os.path.basename(file_path))
+            else:
+                raise Exception("Could not extract file path from audio response")
+        else:
+            return {"error": f"Unsupported provider: {provider}"}
     except Exception as e:
         print("[ERROR] Exception in /audio/generate/:", str(e))
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 @app.post("/audio/transcribe/")
@@ -486,6 +529,36 @@ async def custom_swagger_ui(request: Request):
 async def health_check():
     print("[DEBUG] /healthz called")
     return {"status": "ok"}
+
+@app.post("/audio/elevator_pitch/")
+async def audio_elevator_pitch(
+    prompt: str = Body(...),
+    model: str = Body("gpt-4o-mini"),
+    audio_model: str = Body("openai-audio"),
+    voice: str = Body("alloy"),
+    format: str = Body("mp3"),
+    provider: str = Body("PollinationsAI")
+):
+    # 1. Generate elevator pitch text
+    chat_prompt = [
+        {"role": "system", "content": "You are an expert at writing concise, compelling elevator pitches."},
+        {"role": "user", "content": f"Write a 2-3 sentence elevator pitch for: {prompt}"}
+    ]
+    chat_response = await call_model(chat_prompt, model)
+    if isinstance(chat_response, dict) and chat_response.get("error"):
+        return {"error": f"Chat error: {chat_response['error']}"}
+    pitch = chat_response if isinstance(chat_response, str) else str(chat_response)
+    print("[DEBUG] Elevator pitch generated:", pitch)
+
+    # 2. Generate audio from the pitch
+    audio_response = await generate_audio(
+        text=pitch,
+        model=audio_model,
+        voice=voice,
+        format=format,
+        provider=provider
+    )
+    return audio_response
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))

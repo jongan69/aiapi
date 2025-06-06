@@ -2,3 +2,4 @@
 lib/
 __pycache__/
 include/
+generated_media/
