@@ -22,6 +22,8 @@ import g4f.Provider as Provider
 from g4f.client import Client
 import g4f.debug
 import re
+import time
+import threading
 
 app = FastAPI(
     title="AI API",
@@ -559,6 +561,23 @@ async def audio_elevator_pitch(
         provider=provider
     )
     return audio_response
+
+def cleanup_generated_media(interval_seconds=3600):
+    folder = "generated_media"
+    while True:
+        try:
+            for filename in os.listdir(folder):
+                file_path = os.path.join(folder, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+                    print(f"[CLEANUP] Deleted {file_path}")
+        except Exception as e:
+            print(f"[CLEANUP ERROR] {e}")
+        time.sleep(interval_seconds)
+
+# Start the cleanup thread when the app starts
+cleanup_thread = threading.Thread(target=cleanup_generated_media, args=(3600,), daemon=True)
+cleanup_thread.start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
