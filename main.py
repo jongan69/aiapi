@@ -24,6 +24,11 @@ import g4f.debug
 import re
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
+
+load_dotenv()
+PROXY_URL = os.getenv("G4F_PROXY", None)
+print(f"Using proxy: {PROXY_URL}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -114,7 +119,8 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 client.chat.completions.create,
                 model=model,
                 messages=messages,
-                web_search=False
+                web_search=False,
+                proxy=PROXY_URL
             )
             content = response.choices[0].message.content
 
@@ -185,7 +191,8 @@ async def chat(ai_request: AIRequest):
                     model=model,
                     messages=messages,
                     stream=True,
-                    web_search=False
+                    web_search=False,
+                    proxy=PROXY_URL
                 )
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
@@ -241,7 +248,8 @@ async def generate_image(image_request: ImageRequest):
             client.images.generate,
             model=model,
             prompt=prompt,
-            response_format=response_format
+            response_format=response_format,
+            proxy=PROXY_URL
         )
         print("[DEBUG] Image generation response:", response)
         if response_format == "url":
@@ -281,7 +289,8 @@ async def create_image_variation(
             image_client.images.generate,
             prompt=prompt,
             model=model,
-            response_format=response_format
+            response_format=response_format,
+            proxy=PROXY_URL
         )
         print("[DEBUG] Image variation response:", response)
         if response_format == "url":
@@ -375,7 +384,8 @@ async def generate_audio(
                 client.media.generate,
                 text,
                 model=model,
-                audio={"voice": voice, "format": format}
+                audio={"voice": voice, "format": format},
+                proxy=PROXY_URL
             )
             print("[DEBUG] OpenAIFM audio generation response:", response)
             audio_bytes = response.data[0].audio
@@ -385,7 +395,8 @@ async def generate_audio(
             response = await client.chat.completions.create(
                 model=model,
                 messages=[{"role": "user", "content": text}],
-                audio={"voice": voice, "format": format}
+                audio={"voice": voice, "format": format},
+                proxy=PROXY_URL
             )
             print("[DEBUG] PollinationsAI audio generation response:", response)
             audio_response = response.choices[0].message.content
@@ -436,7 +447,8 @@ async def transcribe_audio(
             messages=[{"role": "user", "content": "Transcribe this audio"}],
             media=[[audio_file, file.filename]],
             modalities=["text"],
-            model=model
+            model=model,
+            proxy=PROXY_URL
         )
         print("[DEBUG] Audio transcription response:", response)
         return {"transcription": response.choices[0].message.content}
@@ -466,6 +478,7 @@ async def generate_video(
             aspect_ratio=aspect_ratio,
             n=n,
             response_format=response_format,
+            proxy=PROXY_URL
         )
         print("[DEBUG] Video generation response:", result)
         return {"urls": [video.url for video in result.data]}
