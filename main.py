@@ -22,8 +22,13 @@ import g4f.Provider as Provider
 from g4f.client import Client
 import g4f.debug
 import re
-import time
-import threading
+from apscheduler.schedulers.background import BackgroundScheduler
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    scheduler.shutdown()
 
 app = FastAPI(
     title="AI API",
@@ -40,7 +45,8 @@ app = FastAPI(
     """,
     version="1.0.0",
     docs_url=None,  # Disable default docs
-    redoc_url=None  # Disable redoc
+    redoc_url=None,  # Disable redoc
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -562,22 +568,20 @@ async def audio_elevator_pitch(
     )
     return audio_response
 
-def cleanup_generated_media(interval_seconds=3600):
+def cleanup_generated_media():
     folder = "generated_media"
-    while True:
-        try:
-            for filename in os.listdir(folder):
-                file_path = os.path.join(folder, filename)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
-                    print(f"[CLEANUP] Deleted {file_path}")
-        except Exception as e:
-            print(f"[CLEANUP ERROR] {e}")
-        time.sleep(interval_seconds)
+    try:
+        for filename in os.listdir(folder):
+            file_path = os.path.join(folder, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"[CLEANUP] Deleted {file_path}")
+    except Exception as e:
+        print(f"[CLEANUP ERROR] {e}")
 
-# Start the cleanup thread when the app starts
-cleanup_thread = threading.Thread(target=cleanup_generated_media, args=(3600,), daemon=True)
-cleanup_thread.start()
+scheduler = BackgroundScheduler()
+scheduler.add_job(cleanup_generated_media, 'interval', seconds=3600)
+scheduler.start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
