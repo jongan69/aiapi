@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 import asyncio
 from g4f.client import Client
+from g4f.Provider import RetryProvider, OpenaiChat, FreeChatgpt, Liaobots, PollinationsAI, PollinationsImage, Midjourney
 import os
 import uvicorn
 import json
@@ -14,6 +15,7 @@ import base64
 import io
 from fastapi.openapi.utils import get_openapi
 from fastapi.middleware.cors import CORSMiddleware
+import g4f.debug
 
 app = FastAPI(
     title="AI API",
@@ -41,7 +43,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = Client()
+g4f.debug.logging = True
+g4f.debug.version_check = False
+
+text_providers = [OpenaiChat, FreeChatgpt, Liaobots]
+image_providers = [PollinationsAI, PollinationsImage, Midjourney]
+
+client = Client(
+    provider=RetryProvider(text_providers, shuffle=True),
+    image_provider=RetryProvider(image_providers, shuffle=True)
+)
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -65,7 +76,7 @@ class AIRequest(BaseModel):
 
 class ImageRequest(BaseModel):
     prompt: str
-    model: str = Field(default="sdxl-turbo")
+    model: str = Field(default="midjourney")
     response_format: str = Field(default="url")
 
 class ImageVariationRequest(BaseModel):
