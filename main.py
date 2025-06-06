@@ -76,7 +76,7 @@ templates = Jinja2Templates(directory="templates")
 
 class AIRequest(BaseModel):
     messages: List[Dict[str, str]]
-    model: str = Field(default="gpt-4o-mini")
+    model: str = Field(default="auto")
     chunk_size: Optional[int] = Field(default=1500)
     wrap_input: Optional[bool] = Field(default=False)
     json_mode: Optional[bool] = Field(
