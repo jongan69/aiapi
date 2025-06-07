@@ -11,7 +11,7 @@ import uvicorn
 import json
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, Response
 from fastapi import Request
 import base64
 from fastapi.openapi.utils import get_openapi
@@ -31,6 +31,30 @@ from check_hf import check_hf_inference_quota
 load_dotenv()
 PROXY_URL = os.getenv("PROXY_URL", None)
 print(f"Using proxy: {PROXY_URL}")
+
+def add_cors_headers(response: Response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+def get_available_models(providers):
+    models = []
+    for provider in providers:
+        try:
+            models += provider.get_models()
+        except Exception as e:
+            print(f"{provider.__name__} error: {e}")
+    return list(set(models))
+
+def get_available_image_models(providers):
+    image_models = []
+    for provider in providers:
+        try:
+            image_models += provider.get_models()
+        except Exception as e:
+            print(f"{provider.__name__} error: {e}")
+    return list(set(image_models))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -155,24 +179,6 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 continue
             else:
                 raise e
-
-def get_available_models(providers):
-    models = []
-    for provider in providers:
-        try:
-            models += provider.get_models()
-        except Exception as e:
-            print(f"{provider.__name__} error: {e}")
-    return list(set(models))
-
-def get_available_image_models(providers):
-    image_models = []
-    for provider in providers:
-        try:
-            image_models += provider.get_models()
-        except Exception as e:
-            print(f"{provider.__name__} error: {e}")
-    return list(set(image_models))
 
 @app.post("/chat/")
 async def chat(ai_request: AIRequest):
@@ -391,7 +397,9 @@ async def generate_audio(
             )
             print("[DEBUG] OpenAIFM audio generation response:", response)
             audio_bytes = response.data[0].audio
-            return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
+            response_obj = StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/mpeg")
+            add_cors_headers(response_obj)
+            return response_obj
         elif provider == "PollinationsAI":
             client = AsyncClient(provider=Provider.PollinationsAI)
             response = await client.chat.completions.create(
@@ -417,7 +425,9 @@ async def generate_audio(
                     file_path = os.path.join('.', file_path.lstrip('/'))
                 print("[DEBUG] Resolved file path:", file_path)
                 print("[DEBUG] Returning audio file:", file_path)
-                return FileResponse(file_path, media_type="audio/mpeg", filename=os.path.basename(file_path))
+                response_obj = FileResponse(file_path, media_type="audio/mpeg", filename=os.path.basename(file_path))
+                add_cors_headers(response_obj)
+                return response_obj
             else:
                 raise Exception("Could not extract file path from audio response")
         else:
@@ -584,6 +594,9 @@ async def audio_elevator_pitch(
         format=format,
         provider=provider
     )
+    # If the response is a StreamingResponse or FileResponse, add CORS headers
+    if isinstance(audio_response, (StreamingResponse, FileResponse)):
+        add_cors_headers(audio_response)
     return audio_response
 
 def cleanup_generated_media():
