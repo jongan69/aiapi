@@ -26,6 +26,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
+from check_hf import check_hf_inference_quota
+
 load_dotenv()
 PROXY_URL = os.getenv("PROXY_URL", None)
 print(f"Using proxy: {PROXY_URL}")
@@ -466,6 +468,9 @@ async def generate_video(
     response_format: str = Body("url")
 ):
     print("[DEBUG] /video/generate/ called with prompt:", prompt, "model:", model, "resolution:", resolution, "aspect_ratio:", aspect_ratio, "n:", n, "response_format:", response_format)
+    status = check_hf_inference_quota()
+    if status["is_exceeded"]:
+        return {"error": "HF inference quota exceeded. Please try again later."}
     try:
         video_client = AsyncClient(
             provider=HuggingFaceMedia,
@@ -484,7 +489,7 @@ async def generate_video(
         return {"urls": [video.url for video in result.data]}
     except Exception as e:
         print("[ERROR] Exception in /video/generate/:", str(e))
-        return {"error": str(e)}
+        return {"error": str(e), "status": status}
 
 @app.get("/models/")
 async def list_models():
