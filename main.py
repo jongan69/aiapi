@@ -27,7 +27,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
 load_dotenv()
-PROXY_URL = os.getenv("G4F_PROXY", None)
+PROXY_URL = os.getenv("PROXY_URL", None)
 print(f"Using proxy: {PROXY_URL}")
 
 @asynccontextmanager
