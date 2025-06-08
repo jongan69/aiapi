@@ -56,7 +56,7 @@ def fetch_with_retry(retries=3, backoff=1):
             }
             response = requests.get("https://api.ngrok.com/tunnels", headers=headers)
             response.raise_for_status()
-            pprint.pprint(response.json())
+            # pprint.pprint(response.json())
             return response.json()
         except Exception as e:
             print(f"Attempt {attempt + 1} failed: {e}")
