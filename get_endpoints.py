@@ -2,6 +2,9 @@ import os
 import time
 import requests
 from dotenv import load_dotenv
+import pprint
+import socket
+from urllib.parse import urlparse
 
 load_dotenv()
 
@@ -9,10 +12,32 @@ load_dotenv()
 cached_endpoints = []
 cache_timestamp = None
 CACHE_DURATION = 60 * 60  # 1 hour
-FALLBACK_API_URLS = os.getenv("FALLBACK_API_URLS", "").split(",")  # Comma-separated list
+# FALLBACK_API_URLS = os.getenv("FALLBACK_API_URLS", "").split(",")  # Comma-separated list
 NGROK_API_KEY = os.getenv("NGROK_API_KEY")
 
+# Add this function to test TCP connectivity
+
+def test_tcp_connection(tcp_url, timeout=5):
+    """
+    Try to connect to the TCP endpoint (e.g., tcp://host:port).
+    Returns True if connection succeeds, False otherwise.
+    """
+    if not tcp_url.startswith("tcp://"):
+        return False
+    parsed = urlparse(tcp_url)
+    host = parsed.hostname
+    port = parsed.port
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except Exception as e:
+        print(f"TCP connection failed for {tcp_url}: {e}")
+        return False
+    
 def validate_endpoint(url: str) -> bool:
+    if url.startswith("tcp://"):
+        # Test TCP connection instead of /health
+        return test_tcp_connection(url)
     try:
         response = requests.get(f"{url}/health", timeout=5)
         response.raise_for_status()
@@ -31,6 +56,7 @@ def fetch_with_retry(retries=3, backoff=1):
             }
             response = requests.get("https://api.ngrok.com/tunnels", headers=headers)
             response.raise_for_status()
+            pprint.pprint(response.json())
             return response.json()
         except Exception as e:
             print(f"Attempt {attempt + 1} failed: {e}")
@@ -75,18 +101,20 @@ def get_endpoints():
     except Exception as e:
         print(f"❌ Error fetching tunnels: {e}")
 
-    # Fallback check
-    valid_fallbacks = []
-    for url in FALLBACK_API_URLS:
-        url = url.strip()
-        if url and validate_endpoint(url):
-            print(f"✅ Fallback valid: {url}")
-            valid_fallbacks.append(url)
+    return valid_urls
 
-    if not valid_fallbacks:
-        print("❌ No valid fallback URLs found")
-
-    return valid_fallbacks
+def get_tcp_endpoint(port="3128"):
+    endpoints = get_endpoints()
+    # Only return TCP tunnels forwarding to the SOCKS5 port
+    for url in endpoints:
+        if url.startswith("tcp://"):
+            # Find the tunnel in the ngrok API response that matches this url
+            data = fetch_with_retry()
+            for tunnel in data.get("tunnels", []):
+                if tunnel.get("public_url") == url and tunnel.get("proto") == "tcp":
+                    if tunnel.get("forwards_to", "").endswith(f":{port}"):
+                        return url
+    return None
 
 # Run script
 if __name__ == "__main__":

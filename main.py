@@ -6,7 +6,6 @@ from typing import List, Optional, Dict, Any
 import asyncio
 from g4f.client import Client, AsyncClient
 from g4f.Provider import RetryProvider, OpenaiChat, Free2GPT, FreeGpt, LambdaChat, PollinationsAI, PollinationsImage, ImageLabs, HuggingFaceMedia
-import os
 import uvicorn
 import json
 from fastapi.staticfiles import StaticFiles
@@ -25,12 +24,23 @@ import re
 from apscheduler.schedulers.background import BackgroundScheduler
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-
+from get_endpoints import get_tcp_endpoint
 from check_hf import check_hf_inference_quota
 
 load_dotenv()
-PROXY_URL = os.getenv("PROXY_URL", None)
-print(f"Using proxy: {PROXY_URL}")
+SOCKS5_USER = os.getenv("SOCKS5_USER")
+SOCKS5_PASS = os.getenv("SOCKS5_PASS")
+proxy_url = get_tcp_endpoint()
+if proxy_url:
+    proxy_url = proxy_url.replace("tcp://", "")
+    print(f"Proxy URL: {proxy_url}")
+    if SOCKS5_USER and SOCKS5_PASS:
+        # Insert credentials into the proxy URL
+        proxy_url = f"http://{SOCKS5_USER}:{SOCKS5_PASS}@{proxy_url}"
+    os.environ["G4F_PROXY"] = proxy_url
+    print(f"G4F_PROXY set to: {os.environ['G4F_PROXY']}")
+else:
+    print("No SOCKS5 proxy found.")
 
 def add_cors_headers(response: Response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -146,7 +156,7 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 model=model,
                 messages=messages,
                 web_search=False,
-                proxy=PROXY_URL
+                proxy=os.getenv("G4F_PROXY")
             )
             content = response.choices[0].message.content
 
@@ -200,7 +210,7 @@ async def chat(ai_request: AIRequest):
                     messages=messages,
                     stream=True,
                     web_search=False,
-                    proxy=PROXY_URL
+                    proxy=os.getenv("G4F_PROXY")
                 )
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
@@ -257,7 +267,7 @@ async def generate_image(image_request: ImageRequest):
             model=model,
             prompt=prompt,
             response_format=response_format,
-            proxy=PROXY_URL
+            proxy=os.getenv("G4F_PROXY")
         )
         print("[DEBUG] Image generation response:", response)
         if response_format == "url":
@@ -298,7 +308,7 @@ async def create_image_variation(
             prompt=prompt,
             model=model,
             response_format=response_format,
-            proxy=PROXY_URL
+            proxy=os.getenv("G4F_PROXY")
         )
         print("[DEBUG] Image variation response:", response)
         if response_format == "url":
@@ -393,7 +403,7 @@ async def generate_audio(
                 text,
                 model=model,
                 audio={"voice": voice, "format": format},
-                proxy=PROXY_URL
+                proxy=os.getenv("G4F_PROXY")
             )
             print("[DEBUG] OpenAIFM audio generation response:", response)
             audio_bytes = response.data[0].audio
@@ -406,7 +416,7 @@ async def generate_audio(
                 model=model,
                 messages=[{"role": "user", "content": text}],
                 audio={"voice": voice, "format": format},
-                proxy=PROXY_URL
+                proxy=os.getenv("G4F_PROXY")
             )
             print("[DEBUG] PollinationsAI audio generation response:", response)
             audio_response = response.choices[0].message.content
@@ -460,7 +470,7 @@ async def transcribe_audio(
             media=[[audio_file, file.filename]],
             modalities=["text"],
             model=model,
-            proxy=PROXY_URL
+            proxy=os.getenv("G4F_PROXY")
         )
         print("[DEBUG] Audio transcription response:", response)
         return {"transcription": response.choices[0].message.content}
@@ -493,7 +503,7 @@ async def generate_video(
             aspect_ratio=aspect_ratio,
             n=n,
             response_format=response_format,
-            proxy=PROXY_URL
+            proxy=os.getenv("G4F_PROXY")
         )
         print("[DEBUG] Video generation response:", result)
         return {"urls": [video.url for video in result.data]}
