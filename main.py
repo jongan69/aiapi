@@ -2,7 +2,7 @@ import io
 import os
 from fastapi import FastAPI, UploadFile, File, Form, Request, Body
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 import asyncio
 from g4f.client import Client, AsyncClient
 from g4f.Provider import RetryProvider, OpenaiChat, Free2GPT, FreeGpt, LambdaChat, PollinationsAI, PollinationsImage, ImageLabs, HuggingFaceMedia
@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from get_endpoints import get_tcp_endpoint
 from check_hf import check_hf_inference_quota
+import time
 
 load_dotenv()
 SOCKS5_USER = os.getenv("SOCKS5_USER")
@@ -137,6 +138,22 @@ class ImageRequest(BaseModel):
 class ImageVariationRequest(BaseModel):
     model: str = Field(default="dall-e-3")
     response_format: str = Field(default="url")
+
+class OpenAIChatCompletionRequest(BaseModel):
+    model: str
+    messages: List[Dict[str, str]]
+    temperature: Optional[float] = 1.0
+    top_p: Optional[float] = 1.0
+    n: Optional[int] = 1
+    stream: Optional[bool] = False
+    stop: Optional[Union[str, List[str]]] = None
+    max_tokens: Optional[int] = None
+    presence_penalty: Optional[float] = 0.0
+    frequency_penalty: Optional[float] = 0.0
+    logit_bias: Optional[Dict[str, float]] = None
+    user: Optional[str] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    tool_choice: Optional[Union[str, Dict[str, Any]]] = None
 
 def chunk_text(text: str, chunk_size: int = 1500) -> List[str]:
     from textwrap import wrap
@@ -623,6 +640,100 @@ def cleanup_generated_media():
 scheduler = BackgroundScheduler()
 scheduler.add_job(cleanup_generated_media, 'interval', seconds=3600)
 scheduler.start()
+
+@app.post("/v1/chat/completions")
+async def openai_chat_completions(request: OpenAIChatCompletionRequest):
+    print("[DEBUG] /v1/chat/completions called with:", request)
+    try:
+        # Map OpenAI model names to our available models
+        model_mapping = {
+            "gpt-4": "gpt-4",
+            "gpt-4-turbo": "gpt-4",
+            "gpt-4-vision": "gpt-4",
+            "gpt-3.5-turbo": "gpt-3.5-turbo",
+            "claude-3-opus": "claude-3-opus",
+            "claude-3-sonnet": "claude-3-sonnet",
+            "claude-3-haiku": "claude-3-haiku"
+        }
+        
+        # Get the mapped model or use the original if not in mapping
+        mapped_model = model_mapping.get(request.model, request.model)
+        
+        # Check if model is available
+        available_models = get_available_models(text_providers)
+        if mapped_model not in available_models:
+            return {
+                "error": {
+                    "message": f"Model '{request.model}' is not available. Please choose from: {available_models}",
+                    "type": "invalid_request_error",
+                    "code": "model_not_found"
+                }
+            }
+
+        # Handle streaming
+        if request.stream:
+            async def generate_stream():
+                stream = client.chat.completions.create(
+                    model=mapped_model,
+                    messages=request.messages,
+                    stream=True,
+                    web_search=False,
+                    proxy=os.getenv("G4F_PROXY")
+                )
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        yield f"data: {json.dumps({
+                            'id': f'chatcmpl-{hash(content)}',
+                            'object': 'chat.completion.chunk',
+                            'created': int(time.time()),
+                            'model': request.model,
+                            'choices': [{
+                                'index': 0,
+                                'delta': {'content': content},
+                                'finish_reason': None
+                            }]
+                        })}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(
+                generate_stream(),
+                media_type="text/event-stream"
+            )
+
+        # Handle non-streaming
+        response = await call_model(request.messages, mapped_model)
+        
+        # Format response in OpenAI style
+        return {
+            "id": f"chatcmpl-{hash(str(response))}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": request.model,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": response
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": len(str(request.messages)),
+                "completion_tokens": len(str(response)),
+                "total_tokens": len(str(request.messages)) + len(str(response))
+            }
+        }
+    except Exception as e:
+        error_message = str(e)
+        print("[ERROR] Exception in /v1/chat/completions:", error_message)
+        return {
+            "error": {
+                "message": f"Error processing request: {error_message}",
+                "type": "internal_server_error",
+                "code": "internal_error"
+            }
+        }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
