@@ -35,3 +35,5 @@ apscheduler==3.11.0
 python-dotenv==1.1.0
 aiohttp_socks==0.10.1
 huggingface_hub==0.32.4
+# httpx==0.28.1
+openai==1.84.0

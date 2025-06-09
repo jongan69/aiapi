@@ -1,19 +1,20 @@
-import httpx
 from openai import OpenAI
+import os
 
-API_URL = "http://0.0.0.0:8000/v1"
+port = int(os.getenv("PORT", 8000))
+API_URL = f"http://0.0.0.0:{port}/v1"
 client = OpenAI(api_key="sk-xxx", base_url=API_URL)
 
-# Example: POST to a custom endpoint
-response = client.post(
-    "/chat/completions",  # or any custom path
-    cast_to=httpx.Response,
-    body={
-        "model": "gpt-4o",
-        "messages": [
-            {"role": "user", "content": "Test undocumented endpoint."}
-        ]
-    }
-)
-print("Status code:", response.status_code)
-print("Raw response:", response.text)
+if __name__ == "__main__":
+    print(port)
+    print(API_URL)
+    print(client)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "Test undocumented endpoint."}]
+    )
+    print(response)
+
+    # Correct way to inspect the response:
+    print("Model:", response.model)
+    print("Response content:", response.choices[0].message.content)
