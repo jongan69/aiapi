@@ -535,6 +535,13 @@ async def list_models():
     print("[DEBUG] Available text models:", models)
     return {"models": models}
 
+@app.get("/v1/models/")
+async def list_models():
+    print("[DEBUG] /v1/models/ called")
+    models = get_available_models(text_providers)
+    print("[DEBUG] Available text models:", models)
+    return {"models": models}
+
 @app.get("/models/image/")
 async def list_image_models():
     print("[DEBUG] /models/image/ called")
