@@ -67,6 +67,17 @@ def get_available_image_models(providers):
             print(f"{provider.__name__} error: {e}")
     return list(set(image_models))
 
+def cleanup_generated_media():
+    folder = "generated_media"
+    try:
+        for filename in os.listdir(folder):
+            file_path = os.path.join(folder, filename)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                print(f"[CLEANUP] Deleted {file_path}")
+    except Exception as e:
+        print(f"[CLEANUP ERROR] {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     yield
@@ -206,6 +217,192 @@ async def call_model(messages: List[Dict[str, str]], model: str, json_mode: bool
                 continue
             else:
                 raise e
+            
+# Custom Swagger UI route
+@app.get("/", response_class=HTMLResponse)
+async def custom_swagger_ui(request: Request):
+    return templates.TemplateResponse("swagger-ui.html", {"request": request})
+
+# Health check endpoint
+@app.get("/healthz")
+async def health_check():
+    print("[DEBUG] /healthz called")
+    return {"status": "ok"}
+
+# OpenAPI endpoint
+@app.get("/openapi.json")
+async def get_openapi_endpoint():
+    print("[DEBUG] /openapi.json called")
+    return get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+# Models endpoint
+@app.get("/models/")
+async def list_models():
+    print("[DEBUG] /models/ called")
+    models = get_available_models(text_providers)
+    print("[DEBUG] Available text models:", models)
+    return {"models": models}
+
+
+# OpenAI Compatible Models endpoint
+@app.get("/v1/models/")
+async def list_models():
+    print("[DEBUG] /v1/models/ called")
+    models = get_available_models(text_providers)
+    print("[DEBUG] Available text models:", models)
+    now = int(time.time())
+    data = [
+        {
+            "id": model,
+            "object": "model",
+            "created": now,
+            "owned_by": "openai"
+        }
+        for model in models
+    ]
+    return {
+        "object": "list",
+        "data": data
+    }
+
+@app.get("/models/image/")
+async def list_image_models():
+    print("[DEBUG] /models/image/ called")
+    image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models:", image_models)
+    return {"models": image_models}
+
+@app.get("/models/video/")
+async def list_video_models():
+    print("[DEBUG] /models/video/ called")
+    try:
+        video_client = AsyncClient(
+            provider=HuggingFaceMedia,
+            api_key=os.getenv("HF_TOKEN")
+        )
+        video_models = video_client.models.get_video()
+        print("[DEBUG] Available video models:", video_models)
+        return {"models": video_models}
+    except Exception as e:
+        print("[ERROR] Exception in /models/video/:", str(e))
+        return {"error": str(e)}
+
+@app.get("/models/image/variation/")
+async def list_image_variation_models():
+    print("[DEBUG] /models/image/variation/ called")
+    image_models = get_available_image_models(image_providers)
+    print("[DEBUG] Available image models for variation:", image_models)
+    return {"models": image_models}
+
+@app.get("/models/audio/voices/")
+async def list_audio_voices():
+    print("[DEBUG] /models/audio/voices/ called")
+    voices = [
+        "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"
+    ]
+    print("[DEBUG] Available voices:", voices)
+    return {"voices": voices}
+
+# OpenAI Compatible Chat Completions endpoint
+@app.post("/v1/chat/completions")
+async def openai_chat_completions(request: OpenAIChatCompletionRequest):
+    print("[DEBUG] /v1/chat/completions called with:", request)
+    try:
+        # Map OpenAI model names to our available models
+        model_mapping = {
+            "gpt-4": "gpt-4",
+            "gpt-4-turbo": "gpt-4",
+            "gpt-4-vision": "gpt-4",
+            "gpt-3.5-turbo": "gpt-3.5-turbo",
+            "claude-3-opus": "claude-3-opus",
+            "claude-3-sonnet": "claude-3-sonnet",
+            "claude-3-haiku": "claude-3-haiku"
+        }
+        
+        # Get the mapped model or use the original if not in mapping
+        mapped_model = model_mapping.get(request.model, request.model)
+        
+        # Check if model is available
+        available_models = get_available_models(text_providers)
+        if mapped_model not in available_models:
+            return {
+                "error": {
+                    "message": f"Model '{request.model}' is not available. Please choose from: {available_models}",
+                    "type": "invalid_request_error",
+                    "code": "model_not_found"
+                }
+            }
+
+        # Handle streaming
+        if request.stream:
+            async def generate_stream():
+                stream = client.chat.completions.create(
+                    model=mapped_model,
+                    messages=request.messages,
+                    stream=True,
+                    web_search=False,
+                    proxy=os.getenv("G4F_PROXY")
+                )
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        content = chunk.choices[0].delta.content
+                        data = {
+                            "id": f"chatcmpl-{hash(content)}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": request.model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": content},
+                                "finish_reason": None
+                            }]
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(
+                generate_stream(),
+                media_type="text/event-stream"
+            )
+
+        # Handle non-streaming
+        response = await call_model(request.messages, mapped_model)
+        
+        # Format response in OpenAI style
+        return {
+            "id": f"chatcmpl-{hash(str(response))}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": request.model,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": response
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": len(str(request.messages)),
+                "completion_tokens": len(str(response)),
+                "total_tokens": len(str(request.messages)) + len(str(response))
+            }
+        }
+    except Exception as e:
+        error_message = str(e)
+        print("[ERROR] Exception in /v1/chat/completions:", error_message)
+        return {
+            "error": {
+                "message": f"Error processing request: {error_message}",
+                "type": "internal_server_error",
+                "code": "internal_error"
+            }
+        }
 
 @app.post("/chat/")
 async def chat(ai_request: AIRequest):
@@ -528,78 +725,6 @@ async def generate_video(
         print("[ERROR] Exception in /video/generate/:", str(e))
         return {"error": str(e), "status": status}
 
-@app.get("/models/")
-async def list_models():
-    print("[DEBUG] /models/ called")
-    models = get_available_models(text_providers)
-    print("[DEBUG] Available text models:", models)
-    return {"models": models}
-
-@app.get("/v1/models/")
-async def list_models():
-    print("[DEBUG] /v1/models/ called")
-    models = get_available_models(text_providers)
-    print("[DEBUG] Available text models:", models)
-    return {"models": models}
-
-@app.get("/models/image/")
-async def list_image_models():
-    print("[DEBUG] /models/image/ called")
-    image_models = get_available_image_models(image_providers)
-    print("[DEBUG] Available image models:", image_models)
-    return {"models": image_models}
-
-@app.get("/models/video/")
-async def list_video_models():
-    print("[DEBUG] /models/video/ called")
-    try:
-        video_client = AsyncClient(
-            provider=HuggingFaceMedia,
-            api_key=os.getenv("HF_TOKEN")
-        )
-        video_models = video_client.models.get_video()
-        print("[DEBUG] Available video models:", video_models)
-        return {"models": video_models}
-    except Exception as e:
-        print("[ERROR] Exception in /models/video/:", str(e))
-        return {"error": str(e)}
-
-@app.get("/models/image/variation/")
-async def list_image_variation_models():
-    print("[DEBUG] /models/image/variation/ called")
-    image_models = get_available_image_models(image_providers)
-    print("[DEBUG] Available image models for variation:", image_models)
-    return {"models": image_models}
-
-@app.get("/models/audio/voices/")
-async def list_audio_voices():
-    print("[DEBUG] /models/audio/voices/ called")
-    voices = [
-        "alloy", "ash", "ballad", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer", "verse"
-    ]
-    print("[DEBUG] Available voices:", voices)
-    return {"voices": voices}
-
-@app.get("/openapi.json")
-async def get_openapi_endpoint():
-    print("[DEBUG] /openapi.json called")
-    return get_openapi(
-        title=app.title,
-        version=app.version,
-        description=app.description,
-        routes=app.routes,
-    )
-
-# Custom Swagger UI route
-@app.get("/", response_class=HTMLResponse)
-async def custom_swagger_ui(request: Request):
-    return templates.TemplateResponse("swagger-ui.html", {"request": request})
-
-@app.get("/healthz")
-async def health_check():
-    print("[DEBUG] /healthz called")
-    return {"status": "ok"}
-
 @app.post("/audio/elevator_pitch/")
 async def audio_elevator_pitch(
     prompt: str = Body(...),
@@ -633,115 +758,9 @@ async def audio_elevator_pitch(
         add_cors_headers(audio_response)
     return audio_response
 
-def cleanup_generated_media():
-    folder = "generated_media"
-    try:
-        for filename in os.listdir(folder):
-            file_path = os.path.join(folder, filename)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-                print(f"[CLEANUP] Deleted {file_path}")
-    except Exception as e:
-        print(f"[CLEANUP ERROR] {e}")
-
 scheduler = BackgroundScheduler()
 scheduler.add_job(cleanup_generated_media, 'interval', seconds=3600)
 scheduler.start()
-
-@app.post("/v1/chat/completions")
-async def openai_chat_completions(request: OpenAIChatCompletionRequest):
-    print("[DEBUG] /v1/chat/completions called with:", request)
-    try:
-        # Map OpenAI model names to our available models
-        model_mapping = {
-            "gpt-4": "gpt-4",
-            "gpt-4-turbo": "gpt-4",
-            "gpt-4-vision": "gpt-4",
-            "gpt-3.5-turbo": "gpt-3.5-turbo",
-            "claude-3-opus": "claude-3-opus",
-            "claude-3-sonnet": "claude-3-sonnet",
-            "claude-3-haiku": "claude-3-haiku"
-        }
-        
-        # Get the mapped model or use the original if not in mapping
-        mapped_model = model_mapping.get(request.model, request.model)
-        
-        # Check if model is available
-        available_models = get_available_models(text_providers)
-        if mapped_model not in available_models:
-            return {
-                "error": {
-                    "message": f"Model '{request.model}' is not available. Please choose from: {available_models}",
-                    "type": "invalid_request_error",
-                    "code": "model_not_found"
-                }
-            }
-
-        # Handle streaming
-        if request.stream:
-            async def generate_stream():
-                stream = client.chat.completions.create(
-                    model=mapped_model,
-                    messages=request.messages,
-                    stream=True,
-                    web_search=False,
-                    proxy=os.getenv("G4F_PROXY")
-                )
-                for chunk in stream:
-                    if chunk.choices[0].delta.content:
-                        content = chunk.choices[0].delta.content
-                        data = {
-                            "id": f"chatcmpl-{hash(content)}",
-                            "object": "chat.completion.chunk",
-                            "created": int(time.time()),
-                            "model": request.model,
-                            "choices": [{
-                                "index": 0,
-                                "delta": {"content": content},
-                                "finish_reason": None
-                            }]
-                        }
-                        yield f"data: {json.dumps(data)}\n\n"
-                yield "data: [DONE]\n\n"
-            
-            return StreamingResponse(
-                generate_stream(),
-                media_type="text/event-stream"
-            )
-
-        # Handle non-streaming
-        response = await call_model(request.messages, mapped_model)
-        
-        # Format response in OpenAI style
-        return {
-            "id": f"chatcmpl-{hash(str(response))}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": request.model,
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": response
-                },
-                "finish_reason": "stop"
-            }],
-            "usage": {
-                "prompt_tokens": len(str(request.messages)),
-                "completion_tokens": len(str(response)),
-                "total_tokens": len(str(request.messages)) + len(str(response))
-            }
-        }
-    except Exception as e:
-        error_message = str(e)
-        print("[ERROR] Exception in /v1/chat/completions:", error_message)
-        return {
-            "error": {
-                "message": f"Error processing request: {error_message}",
-                "type": "internal_server_error",
-                "code": "internal_error"
-            }
-        }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8000))
