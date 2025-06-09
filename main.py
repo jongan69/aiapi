@@ -683,17 +683,18 @@ async def openai_chat_completions(request: OpenAIChatCompletionRequest):
                 for chunk in stream:
                     if chunk.choices[0].delta.content:
                         content = chunk.choices[0].delta.content
-                        yield f"data: {json.dumps({
-                            'id': f'chatcmpl-{hash(content)}',
-                            'object': 'chat.completion.chunk',
-                            'created': int(time.time()),
-                            'model': request.model,
-                            'choices': [{
-                                'index': 0,
-                                'delta': {'content': content},
-                                'finish_reason': None
+                        data = {
+                            "id": f"chatcmpl-{hash(content)}",
+                            "object": "chat.completion.chunk",
+                            "created": int(time.time()),
+                            "model": request.model,
+                            "choices": [{
+                                "index": 0,
+                                "delta": {"content": content},
+                                "finish_reason": None
                             }]
-                        })}\n\n"
+                        }
+                        yield f"data: {json.dumps(data)}\n\n"
                 yield "data: [DONE]\n\n"
             
             return StreamingResponse(
