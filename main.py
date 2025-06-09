@@ -374,6 +374,7 @@ async def openai_chat_completions(request: OpenAIChatCompletionRequest):
         response = await call_model(request.messages, mapped_model)
         
         # Format response in OpenAI style
+        print("[DEBUG] Returning response:", response)
         return {
             "id": f"chatcmpl-{hash(str(response))}",
             "object": "chat.completion",
