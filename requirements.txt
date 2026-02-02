@@ -28,7 +28,7 @@ urllib3==2.5.0
 uvicorn==0.34.1
 yarl==1.19.0
 jinja2==3.1.6
-python-multipart==0.0.20
+python-multipart==0.0.22
 # nodriver==0.45.2 # Remove to disable browser automation
 platformdirs==4.3.7
 apscheduler==3.11.0
